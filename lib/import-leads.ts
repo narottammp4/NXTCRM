@@ -15,7 +15,28 @@ export const standard = [
   ["source", "Source"],
   ["project", "Project"],
 ] as const;
-export function parseCSV(text: string) {
+export function decodeLeadFile(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b)
+    throw Error("This is an Excel workbook. Export it as CSV or tab-separated text first.");
+  let encoding = "utf-8";
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
+  else {
+    const sample = bytes.slice(0, 200);
+    const even = sample.filter((b, i) => i % 2 === 0 && b === 0).length;
+    const odd = sample.filter((b, i) => i % 2 === 1 && b === 0).length;
+    if (odd > sample.length / 5) encoding = "utf-16le";
+    else if (even > sample.length / 5) encoding = "utf-16be";
+  }
+  try {
+    return new TextDecoder(encoding, { fatal: true }).decode(buffer).replace(/^\uFEFF/, "");
+  } catch {
+    throw Error("Could not read the file encoding. Export as CSV UTF-8 or Unicode tab-separated text.");
+  }
+}
+
+function parseSeparated(text: string, separator: string) {
   const rows: string[][] = [];
   let row: string[] = [],
     cell = "",
@@ -27,7 +48,7 @@ export function parseCSV(text: string) {
         cell += '"';
         i++;
       } else quoted = !quoted;
-    } else if (c === "," && !quoted) {
+    } else if (c === separator && !quoted) {
       row.push(cell);
       cell = "";
     } else if ((c === "\n" || c === "\r") && !quoted) {
@@ -44,6 +65,35 @@ export function parseCSV(text: string) {
   if (rows[0]) rows[0][0] = rows[0][0].replace(/^\uFEFF/, "");
   return rows;
 }
+
+export function parseLeadText(input: string) {
+  let text = input.replace(/^\uFEFF/, "");
+  const directive = /^sep=([,;\t|])\r?\n/i.exec(text);
+  if (directive) text = text.slice(directive[0].length);
+  const separators = directive ? [directive[1]] : [",", "\t", ";", "|"];
+  const candidates = separators.flatMap((separator) => {
+    try {
+      const rows = parseSeparated(text, separator);
+      const width = rows[0]?.length || 0;
+      if (width < 2) return [];
+      const sample = rows.slice(1, 51);
+      const consistency = sample.length
+        ? sample.filter((r) => r.length === width).length / sample.length : 1;
+      return [{ rows, separator, score: consistency * 1000 + Math.min(width, 100) }];
+    } catch { return []; }
+  }).sort((a, b) => b.score - a.score);
+  if (!candidates.length) {
+    // Preserve a useful quote error instead of hiding it behind separator detection.
+    parseSeparated(text, directive?.[1] || ",");
+    throw Error("Could not identify separate columns. Export CSV or tab-separated text with a header row containing Name and Phone. Spaces alone are not column separators.");
+  }
+  const best = candidates[0];
+  return { rows: best.rows, separator: best.separator };
+}
+
+export function parseCSV(text: string) {
+  return parseLeadText(text).rows;
+}
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 export function suggest(headers: string[], fields: Field[]) {
   const aliases: Record<string, string> = {
@@ -52,6 +102,17 @@ export function suggest(headers: string[], fields: Field[]) {
     mobile: "phone",
     mobilenumber: "phone",
     phonenumber: "phone",
+    workphonenumber: "phone",
+    workphone: "phone",
+    contactnumber: "phone",
+    contactphone: "phone",
+    whatsappnumber: "phone",
+    whatsapp: "phone",
+    telephone: "phone",
+    leadname: "name",
+    customername: "name",
+    yourname: "name",
+    workemail: "email",
     emailaddress: "email",
     city: "location",
     interestedin: "bhk",
@@ -140,12 +201,17 @@ export function prepare(
     });
     if (!l.name || l.name.length > 150)
       err("Name is required, up to 150 characters.");
-    const p = String(l.phone || "").replace(/[^+\d]/g, "");
-    if (!/^\+?\d{10,15}$/.test(p)) err("Phone must contain 10–15 digits.");
+    const rawPhone = String(l.phone || "").trim().replace(/^p:/i, "");
+    const p = rawPhone.replace(/[\s().-]/g, "");
+    const validPhone = /^\+?\d{10,15}$/.test(p);
+    if (!validPhone) err("Phone must contain 10–15 digits. Use the full number, not scientific notation.");
     const phone = p.length === 10 ? "+91" + p : "+" + p.replace(/^\+/, "");
-    if (phones.has(phone)) err("duplicate phone inside CSV.");
-    phones.add(phone);
-    if (known.has(phone)) err("phone already exists in your accessible leads.");
+    if (validPhone) {
+      l.phone = phone;
+      if (phones.has(phone)) err("duplicate phone inside CSV.");
+      phones.add(phone);
+      if (known.has(phone)) err("phone already exists in your accessible leads.");
+    }
     if (l.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l.email))
       err("invalid email.");
     for (const f of fields) {

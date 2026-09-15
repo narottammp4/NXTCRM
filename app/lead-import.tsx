@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import ImportSelect from "./import-select";
 import {
-  parseCSV,
+  parseLeadText,
+  decodeLeadFile,
   suggest,
   prepare,
   standard,
@@ -32,6 +33,7 @@ export default function LeadImport({
   onCreate,
   onImport,
 }: Props) {
+  const [separatorLabel, setSeparatorLabel] = useState("");
   const [pendingMove, setPendingMove] = useState<{
     index: number;
     oldIndex: number;
@@ -263,11 +265,12 @@ export default function LeadImport({
       <div className="import-area">
         <h2>Bring your leads with you</h2>
         <p>
-          Upload CSV, choose what to keep, then review. Up to 500 leads / 2 MB.
+          Upload CSV or tab-separated text, choose what to keep, then review.
+          Commas, tabs, semicolons and pipes are detected automatically. Up to 500 leads / 2 MB.
         </p>
         <input
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
           disabled={busy}
           aria-label="Upload leads CSV"
           onChange={async (e) => {
@@ -280,13 +283,15 @@ export default function LeadImport({
             try {
               if (file.size > 2000000)
                 throw Error("Choose a file smaller than 2 MB.");
-              const csv = parseCSV(await file.text());
+              const parsed = parseLeadText(decodeLeadFile(await file.arrayBuffer()));
+              const csv = parsed.rows;
               if (csv.length < 2 || csv.length > 501)
                 throw Error("CSV needs a header and 1–500 data rows.");
               setHeaders(csv[0]);
               setRows(csv.slice(1));
               setMapping(suggest(csv[0], fields));
               setFileName(file.name);
+              setSeparatorLabel(({ ",": "Comma", "\t": "Tab", ";": "Semicolon", "|": "Pipe" } as Record<string, string>)[parsed.separator]);
             } catch (e) {
               setHeaders([]);
               setRows([]);
@@ -300,7 +305,7 @@ export default function LeadImport({
       {headers.length > 0 && (
         <>
           <p className="import-count">
-            {fileName} · {rows.length} leads ·{" "}
+            {fileName} · {separatorLabel}-separated · {headers.length} columns detected · {rows.length} leads ·{" "}
             {mapping.filter((m) => m !== "skip").length} columns kept
           </p>
           <p className="category-help">
