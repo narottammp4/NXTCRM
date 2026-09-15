@@ -16,7 +16,7 @@ function fail(e: unknown) {
 export async function GET() {
   try {
     const u = await actor();
-    const { data, error } = await serviceClient().rpc("crm_snapshot_v2", {
+    const { data, error } = await serviceClient().rpc("crm_snapshot_v3", {
       actor_id: u.id,
     });
     if (error) throw new Error(error.message);
@@ -103,7 +103,7 @@ export async function POST(req: Request) {
         b.options.some((x: unknown) => typeof x !== "string" || x.length > 80))
     )
       throw new Error("Use up to 50 options of 80 characters each");
-    const { data, error } = await s.rpc("crm_mutate_v2", { actor_id: u.id, b });
+    const { data, error } = await s.rpc("crm_mutate_v3", { actor_id: u.id, b });
     if (error) {
       if (error.code === "23505")
         throw new Error(

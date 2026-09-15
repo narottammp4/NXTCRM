@@ -18,6 +18,7 @@ import {
   LogOut,
   ArrowDownToLine,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import {
   SidebarProvider,
@@ -168,6 +169,15 @@ const badge = (s: string) =>
           ? "gray"
           : "blue";
 export default function CRM() {
+  const [checkedLeads, setCheckedLeads] = useState<string[]>([]);
+  const [trashQuery, setTrashQuery] = useState("");
+  const [confirmation, setConfirmation] = useState<any>(null);
+  const [confirmText, setConfirmText] = useState("");
+  function requestDeletion(body: any, title: string, message: string, permanent = false) {
+    setConfirmText("");
+    setSelected(null);
+    setConfirmation({ body, title, message, permanent });
+  }
   const modalRef = useRef("");
   const [clientFilter, setClientFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all"),
@@ -239,6 +249,9 @@ export default function CRM() {
   useEffect(() => {
     setPage(1);
   }, [query, filter, owner, sort, clientFilter, projectFilter, campaignFilter]);
+  useEffect(() => {
+    setCheckedLeads([]);
+  }, [query, filter, owner, sort, clientFilter, projectFilter, campaignFilter, page, view, data]);
   useEffect(() => {
     setCategoryDraft({
       client_id: clientFilter === "all" ? "" : clientFilter,
@@ -542,6 +555,7 @@ export default function CRM() {
       <Table className="lead-table">
         <TableHeader>
           <TableRow>
+            {isAdmin && view === "Search" && <TableHead><input type="checkbox" aria-label="Select all leads on this page" disabled={busy} checked={items.length > 0 && items.every((l) => checkedLeads.includes(l.id))} onChange={(e) => setCheckedLeads(e.target.checked ? items.map((l) => l.id) : [])} /></TableHead>}
             <TableHead>Lead / contact</TableHead>
             <TableHead>Client / project</TableHead>
             <TableHead>Status</TableHead>
@@ -558,6 +572,7 @@ export default function CRM() {
         <TableBody>
           {items.map((l) => (
             <TableRow key={l.id}>
+              {isAdmin && view === "Search" && <TableCell><input type="checkbox" aria-label={"Select " + l.name} disabled={busy} checked={checkedLeads.includes(l.id)} onChange={(e) => setCheckedLeads((ids) => e.target.checked ? [...ids, l.id] : ids.filter((id) => id !== l.id))} /></TableCell>}
               <TableCell>
                 <button className="lead-name" onClick={() => setSelected(l)}>
                   <span className="avatar">{initials(l.name)}</span>
@@ -755,6 +770,7 @@ export default function CRM() {
                 </SidebarMenuButton>
               </SidebarMenuItem>
             ))}
+            {isAdmin && <SidebarMenuItem><SidebarMenuButton className="nav-item" isActive={view === "Trash"} onClick={() => setView("Trash")}><Trash2 /><span>Trash</span><span className="nav-count">{(data.trash || []).filter((l: any) => clientFilter === "all" || l.client_id === clientFilter).length}</span></SidebarMenuButton></SidebarMenuItem>}
           </SidebarMenu>
           <div className="sidebar-note">
             <div className="note-icon">
@@ -851,6 +867,8 @@ export default function CRM() {
                   ? isAdmin
                     ? `Your sales overview, ${data.user.name.split(" ")[0]}.`
                     : `Your day, ${data.user.name.split(" ")[0]}.`
+                  : view === "Trash"
+                    ? "Deleted leads"
                   : view === "Campaigns"
                     ? "Campaigns & ads"
                     : view === "Search"
@@ -1191,6 +1209,7 @@ export default function CRM() {
                         >
                           View leads →
                         </button>
+                        {isAdmin && <button className="text-button" disabled={busy} style={{ color: "#b42318", marginTop: 12 }} onClick={() => requestDeletion({ action: "deleteCampaign", id: ca.id }, "Delete campaign “" + ca.name + "”?", "This permanently removes the campaign. All linked leads, including leads in Trash, keep their client, project, notes and call history and move to Manual / no campaign. No leads will be deleted.", true)}>Delete campaign</button>}
                       </article>
                     );
                   })}
@@ -1216,6 +1235,7 @@ export default function CRM() {
           )}
           {view === "Search" && (
             <section className="panel">
+              {isAdmin && checkedLeads.length > 0 && <div className="list-meta" role="status"><span>{checkedLeads.length} leads selected on this page</span><button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "trashLeads", ids: checkedLeads }, "Delete " + checkedLeads.length + " leads?", "Move these selected leads to Trash? They will disappear from caller lists, dashboards and reports. An admin can restore them later.")}>Delete selected</button></div>}
               <div className="category-filters">
                 <Pick
                   label="Filter project"
@@ -1388,6 +1408,19 @@ export default function CRM() {
               )}
             </section>
           )}
+          {view === "Trash" && isAdmin && <section className="panel" style={{ padding: 20 }}>
+            <h2>Trash</h2>
+            <p>Restore deleted leads or permanently remove them and their notes and call history. Phone numbers remain reserved while leads are in Trash.</p>
+            <input aria-label="Search Trash by name or phone" placeholder="Search deleted leads by name or phone…" value={trashQuery} onChange={(e) => setTrashQuery(e.target.value)} style={{ width: "100%", margin: "16px 0" }} />
+            {(data.trash || []).filter((l: any) => (clientFilter === "all" || l.client_id === clientFilter) && (l.name + " " + l.phone).toLowerCase().includes(trashQuery.toLowerCase())).map((l: any) => <article key={l.id} style={{ borderTop: "1px solid #e2e8f0", padding: "16px 0", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
+              <div><strong>{l.name}</strong><p>{l.phone} · {categoryName(clients, l.client_id)}</p><small>Deleted {fmt(l.deleted_at)}</small></div>
+              <div className="inline" style={{ flexWrap: "wrap" }}>
+                <button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "restoreLeads", ids: [l.id] }, "Restore “" + l.name + "”?", "Restore this lead to its assigned caller with its notes, history and previous follow-up dates. Past follow-ups may appear overdue.")}>Restore</button>
+                <button className="secondary" disabled={busy} style={{ color: "#b42318" }} onClick={() => requestDeletion({ action: "purgeLeads", ids: [l.id] }, "Permanently delete “" + l.name + "”?", "This removes the lead and all its notes and call history. This cannot be undone.", true)}>Delete permanently</button>
+              </div>
+            </article>)}
+            {!(data.trash || []).some((l: any) => (clientFilter === "all" || l.client_id === clientFilter) && (l.name + " " + l.phone).toLowerCase().includes(trashQuery.toLowerCase())) && <p>No deleted leads found.</p>}
+          </section>}
           {view === "Reports & Stats" && (
             <>
               <div className="report-toolbar">
@@ -1866,6 +1899,16 @@ export default function CRM() {
           ))}
         </nav>
       </SidebarInset>
+      <Dialog open={!!confirmation && isAdmin} onOpenChange={(open) => { if (!open && !busy) setConfirmation(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{confirmation?.title}</DialogTitle><DialogDescription>{confirmation?.message}</DialogDescription></DialogHeader>
+          {confirmation?.permanent && <label>Type DELETE to confirm<input aria-label="Type DELETE to confirm" autoComplete="off" value={confirmText} disabled={busy} onChange={(e) => setConfirmText(e.target.value)} style={{ display: "block", width: "100%", marginTop: 8 }} /></label>}
+          <div className="inline" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button className="secondary" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button>
+            <button className="primary" disabled={busy || (confirmation?.permanent && confirmText !== "DELETE")} onClick={() => save(confirmation.body, () => { if (confirmation.body.action === "deleteCampaign") setCampaignFilter("all"); setConfirmation(null); setCheckedLeads([]); })}>{busy ? "Saving…" : confirmation?.body.action === "restoreLeads" ? "Restore lead" : confirmation?.permanent ? "Delete permanently" : "Move to Trash"}</button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Sheet
         open={!!selected && !modal}
         onOpenChange={(v) => !v && setSelected(null)}
@@ -1883,6 +1926,7 @@ export default function CRM() {
                 {current.status}
               </span>
               <div className="sheet-actions">
+                {isAdmin && <button className="secondary" disabled={busy} style={{ color: "#b42318" }} onClick={() => requestDeletion({ action: "trashLeads", ids: [current.id] }, "Delete “" + current.name + "”?", "Move this lead to Trash? An admin can restore it later. It will disappear from active lists and reports.")}>Delete lead</button>}
                 <button className="primary" onClick={() => call(current)}>
                   <Phone size={17} />
                   Call lead
