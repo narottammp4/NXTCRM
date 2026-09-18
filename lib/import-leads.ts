@@ -141,6 +141,7 @@ export function prepare(
   mapping: string[],
   fields: Field[],
   existing: any[],
+  options: { skipDuplicateChecks?: boolean; rowNumbers?: number[] } = {},
 ) {
   const errors: string[] = [];
   const targets = mapping.filter((x) => x !== "skip");
@@ -154,7 +155,7 @@ export function prepare(
     known = new Set(existing.map((l) => l.phone));
   const leads = rows.map((row, index) => {
     const l: any = { custom: {} };
-    const err = (m: string) => errors.push("Row " + (index + 2) + ": " + m);
+    const err = (m: string) => errors.push("Row " + (options.rowNumbers?.[index] ?? index + 2) + ": " + m);
     if (row.length !== headers.length)
       err("column count differs from the header.");
     mapping.forEach((target, col) => {
@@ -208,9 +209,9 @@ export function prepare(
     const phone = p.length === 10 ? "+91" + p : "+" + p.replace(/^\+/, "");
     if (validPhone) {
       l.phone = phone;
-      if (phones.has(phone)) err("duplicate phone inside CSV.");
+      if (!options.skipDuplicateChecks && phones.has(phone)) err("duplicate phone inside CSV.");
       phones.add(phone);
-      if (known.has(phone)) err("phone already exists in your accessible leads.");
+      if (!options.skipDuplicateChecks && known.has(phone)) err("phone already exists in your accessible leads.");
     }
     if (l.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(l.email))
       err("invalid email.");

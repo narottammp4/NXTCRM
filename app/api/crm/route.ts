@@ -103,11 +103,11 @@ export async function POST(req: Request) {
         b.options.some((x: unknown) => typeof x !== "string" || x.length > 80))
     )
       throw new Error("Use up to 50 options of 80 characters each");
-    const { data, error } = await s.rpc("crm_mutate_v3", { actor_id: u.id, b });
+    const { data, error } = await s.rpc("crm_mutate_v4", { actor_id: u.id, b });
     if (error) {
       if (error.code === "23505")
         throw new Error(
-          "409:This phone number, field, or category name already exists. No changes were saved.",
+          "409:An enquiry with this phone already exists in the same client/project (possibly in Trash), or a field/category name is already used. No changes were saved.",
         );
       if (error.code === "23514")
         throw new Error("Select a valid status or field type");

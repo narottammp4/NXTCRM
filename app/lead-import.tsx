@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import ImportSelect from "./import-select";
+import { reviewEnquiries } from "@/lib/enquiries";
 import {
   parseLeadText,
   decodeLeadFile,
@@ -17,6 +18,7 @@ type Props = {
   projects: any[];
   fields: Field[];
   existing: any[];
+  onViewLead?: (lead: any) => void;
   isAdmin: boolean;
   onCreate: (body: any) => Promise<any>;
   onImport: (rows: any[]) => Promise<void>;
@@ -29,11 +31,13 @@ export default function LeadImport({
   projects,
   fields,
   existing,
+  onViewLead,
   isAdmin,
   onCreate,
   onImport,
 }: Props) {
   const [separatorLabel, setSeparatorLabel] = useState("");
+  const [rowChoices, setRowChoices] = useState<Record<number, 'keep'|'discard'>>({});
   const [pendingMove, setPendingMove] = useState<{
     index: number;
     oldIndex: number;
@@ -72,7 +76,9 @@ export default function LeadImport({
   const campaign = available.find((c) => c.id === campaignId);
   const validCampaign = campaignId === "manual" || Boolean(campaign);
   const actualProject = campaign?.project_id || projectId;
-  const result = prepare(headers, rows, mapping, fields, existing);
+  useEffect(() => { setRowChoices({}); }, [rows,mapping,client?.id,actualProject,campaignId]);
+  const duplicateReview = reviewEnquiries(headers, rows, mapping, fields, existing, { clientId: client?.id || '', projectId: actualProject || '', campaignId: campaignId === 'manual' ? '' : campaignId, projects }, rowChoices);
+  const { result, keptIndexes } = duplicateReview;
   const label = (target: string) =>
     target.startsWith("std:")
       ? (standard.find(([k]) => "std:" + k === target)?.[1] || target) +
@@ -538,6 +544,22 @@ export default function LeadImport({
           {review && (
             <div className="import-review">
               <h3>Confirm import</h3>
+              {duplicateReview.entries.some(e=>e.duplicates.length || e.existing.length) && <section aria-label="Review duplicates">
+                <h3>Review duplicates</h3><p>Keep one row per phone in this client/project, or discard the group. Keep automatically discards its matching rows. Your original file stays unchanged.</p>
+                {duplicateReview.entries.filter(e=>e.duplicates.length || e.existing.length).map(e=><article key={e.index} style={{padding:16,marginBottom:12,border:'1px solid #d4d8de',borderRadius:12}}>
+                  <strong>Row {e.index+2}: {e.lead.name || 'No name'} · {e.lead.phone || 'No phone'}</strong>
+                  <p>{e.existing.length ? 'Already in this client/project'+(e.existing.some(l=>l.deleted_at)?' (in Trash)':'') : 'Matches CSV row(s) '+e.duplicates.map(i=>i+2).join(', ')}</p>
+                  <details><summary>Compare imported details</summary>{headers.map((h,i)=><p key={i} style={{overflowWrap:'anywhere'}}><strong>{h}:</strong> {rows[e.index][i] || '—'}</p>)}</details>
+                  <div className="inline" style={{flexWrap:'wrap',marginTop:12}}>
+                    <button type="button" className="secondary" disabled={busy || !!e.existing.length} aria-pressed={rowChoices[e.index]==='keep'} onClick={()=>setRowChoices(old=>{const next={...old,[e.index]:'keep' as const};e.duplicates.forEach(i=>next[i]='discard');return next;})}>Keep row {e.index+2}</button>
+                    <button type="button" className="secondary" disabled={busy} aria-pressed={rowChoices[e.index]==='discard'} onClick={()=>setRowChoices(old=>({...old,[e.index]:'discard'}))}>Discard row {e.index+2}</button>
+                    {e.existing.filter(l=>!l.deleted_at).map(l=><button type="button" className="text-button" key={l.id} onClick={()=>onViewLead?.(l)}>View existing lead</button>)}
+                    <strong>{rowChoices[e.index]==='discard'?'Discarded':rowChoices[e.index]==='keep'?'Keeping':'Choose an action'}</strong>
+                  </div>
+                </article>)}
+              </section>}
+              {duplicateReview.entries.filter(e=>e.related.length && rowChoices[e.index]!=='discard').map(e=><p key={e.index}>Row {e.index+2}: this number has {e.related.length} other accessible enquiry/enquiries in different clients or projects. This new enquiry is allowed.</p>)}
+              <p>{keptIndexes.length} leads selected for import · {Object.values(rowChoices).filter(x=>x==='discard').length} rows discarded</p>
               <p>
                 <strong>{client?.name}</strong> ·{" "}
                 {projects.find((p) => p.id === actualProject)?.name ||
@@ -588,7 +610,7 @@ export default function LeadImport({
                         </tr>
                       </thead>
                       <tbody>
-                        {rows.slice(0, 5).map((r, i) => (
+                        {keptIndexes.slice(0, 5).map((index, i) => { const r=rows[index]; return (
                           <tr key={i}>
                             {headers.map(
                               (_, j) =>
@@ -597,7 +619,7 @@ export default function LeadImport({
                                 ),
                             )}
                           </tr>
-                        ))}
+                        ); })}
                       </tbody>
                     </table>
                   </div>
@@ -613,13 +635,7 @@ export default function LeadImport({
                       setError("");
                       try {
                         await onImport(
-                          result.leads.map((l) => ({
-                            ...l,
-                            client_id: client.id,
-                            project_id: actualProject,
-                            campaign_id:
-                              campaignId === "manual" ? "" : campaignId,
-                          })),
+                          result.leads,
                         );
                         setHeaders([]);
                         setRows([]);
@@ -635,7 +651,7 @@ export default function LeadImport({
                   >
                     {busy
                       ? "Importing…"
-                      : "Confirm & import " + rows.length + " leads"}
+                      : "Confirm & import " + keptIndexes.length + " leads"}
                   </button>
                 </>
               )}

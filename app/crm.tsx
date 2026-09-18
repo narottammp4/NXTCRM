@@ -68,6 +68,8 @@ import { toast } from "sonner";
 import CallerDashboard from "./caller-dashboard";
 import LeadImport from "./lead-import";
 import ImportSelect from "./import-select";
+import BulkAssignment from "./bulk-assignment";
+import { phoneKey } from "@/lib/enquiries";
 const statuses = [
   "New",
   "Contacted",
@@ -169,6 +171,7 @@ const badge = (s: string) =>
           ? "gray"
           : "blue";
 export default function CRM() {
+  const [assignmentCampaign,setAssignmentCampaign]=useState('');
   const [checkedLeads, setCheckedLeads] = useState<string[]>([]);
   const [trashQuery, setTrashQuery] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
@@ -771,6 +774,7 @@ export default function CRM() {
               </SidebarMenuItem>
             ))}
             {isAdmin && <SidebarMenuItem><SidebarMenuButton className="nav-item" isActive={view === "Trash"} onClick={() => setView("Trash")}><Trash2 /><span>Trash</span><span className="nav-count">{(data.trash || []).filter((l: any) => clientFilter === "all" || l.client_id === clientFilter).length}</span></SidebarMenuButton></SidebarMenuItem>}
+            {isAdmin && <SidebarMenuItem><SidebarMenuButton className="nav-item" isActive={view === "Assign leads"} onClick={()=>{setAssignmentCampaign('');setView('Assign leads');}}><Users/><span>Assign leads</span></SidebarMenuButton></SidebarMenuItem>}
           </SidebarMenu>
           <div className="sidebar-note">
             <div className="note-icon">
@@ -867,6 +871,7 @@ export default function CRM() {
                   ? isAdmin
                     ? `Your sales overview, ${data.user.name.split(" ")[0]}.`
                     : `Your day, ${data.user.name.split(" ")[0]}.`
+                  : view === "Assign leads" ? "Assign client and campaign leads"
                   : view === "Trash"
                     ? "Deleted leads"
                   : view === "Campaigns"
@@ -1184,6 +1189,7 @@ export default function CRM() {
                             "Client-wide"}
                         </small>
                         <h3>{ca.name}</h3>
+                        {isAdmin && <button className="secondary" onClick={()=>{setAssignmentCampaign(ca.id);setView('Assign leads');}}>Assign full campaign</button>}
                         <strong className="campaign-count">
                           {rows.length} leads
                         </strong>
@@ -1233,6 +1239,7 @@ export default function CRM() {
               </div>
             </section>
           )}
+          {view === "Assign leads" && isAdmin && <BulkAssignment key={assignmentCampaign} initialCampaign={assignmentCampaign} clients={clients} campaigns={campaigns} users={users} post={post} onSaved={refresh}/>}
           {view === "Search" && (
             <section className="panel">
               {isAdmin && checkedLeads.length > 0 && <div className="list-meta" role="status"><span>{checkedLeads.length} leads selected on this page</span><button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "trashLeads", ids: checkedLeads }, "Delete " + checkedLeads.length + " leads?", "Move these selected leads to Trash? They will disappear from caller lists, dashboards and reports. An admin can restore them later.")}>Delete selected</button></div>}
@@ -1839,7 +1846,8 @@ export default function CRM() {
                       campaigns={campaigns}
                       projects={projects}
                       fields={fields}
-                      existing={allLeads}
+                      existing={[...allLeads,...(isAdmin ? data.trash || [] : [])]}
+                      onViewLead={(l)=>setSelected(l)}
                       isAdmin={isAdmin}
                       onCreate={async (body) => {
                         const result = await post(body);
@@ -1939,6 +1947,16 @@ export default function CRM() {
                 </button>
               </div>
               <div className="detail-grid">
+                <section style={{gridColumn:'1 / -1'}}>
+                  <h3>Related enquiries</h3>
+                  <p>Other accessible records using this phone number.</p>
+                  {[...allLeads,...(isAdmin?data.trash || []:[])].filter(l=>l.id!==current.id && phoneKey(l.phone)===phoneKey(current.phone)).map(l=><div key={l.id} style={{padding:'12px 0',borderBottom:'1px solid #e2e8f0'}}>
+                    <strong>{categoryName(clients,l.client_id)} · {l.project || 'No project'}</strong>
+                    <p>{categoryName(campaigns,l.campaign_id) || 'Manual / no campaign'} · {l.status} · {userName(l.assignee)}{l.deleted_at?' · In Trash':''}</p>
+                    {!l.deleted_at && <button className="text-button" onClick={()=>setSelected(l)}>Open enquiry</button>}
+                  </div>)}
+                  {![...allLeads,...(isAdmin?data.trash || []:[])].some(l=>l.id!==current.id && phoneKey(l.phone)===phoneKey(current.phone)) && <p>No other accessible enquiries.</p>}
+                </section>
                 {[
                   ["Budget", current.budget],
                   ["Configuration", current.bhk],
