@@ -37,6 +37,7 @@ export default function LeadImport({
   onImport,
 }: Props) {
   const [separatorLabel, setSeparatorLabel] = useState("");
+  const [duplicatesOnly, setDuplicatesOnly] = useState(true);
   const [rowChoices, setRowChoices] = useState<Record<number, 'keep'|'discard'>>({});
   const [pendingMove, setPendingMove] = useState<{
     index: number;
@@ -544,21 +545,27 @@ export default function LeadImport({
           {review && (
             <div className="import-review">
               <h3>Confirm import</h3>
-              {duplicateReview.entries.some(e=>e.duplicates.length || e.existing.length) && <section aria-label="Review duplicates">
-                <h3>Review duplicates</h3><p>Keep one row per phone in this client/project, or discard the group. Keep automatically discards its matching rows. Your original file stays unchanged.</p>
-                {duplicateReview.entries.filter(e=>e.duplicates.length || e.existing.length).map(e=><article key={e.index} style={{padding:16,marginBottom:12,border:'1px solid #d4d8de',borderRadius:12}}>
-                  <strong>Row {e.index+2}: {e.lead.name || 'No name'} · {e.lead.phone || 'No phone'}</strong>
-                  <p>{e.existing.length ? 'Already in this client/project'+(e.existing.some(l=>l.deleted_at)?' (in Trash)':'') : 'Matches CSV row(s) '+e.duplicates.map(i=>i+2).join(', ')}</p>
-                  <details><summary>Compare imported details</summary>{headers.map((h,i)=><p key={i} style={{overflowWrap:'anywhere'}}><strong>{h}:</strong> {rows[e.index][i] || '—'}</p>)}</details>
-                  <div className="inline" style={{flexWrap:'wrap',marginTop:12}}>
-                    <button type="button" className="secondary" disabled={busy || !!e.existing.length} aria-pressed={rowChoices[e.index]==='keep'} onClick={()=>setRowChoices(old=>{const next={...old,[e.index]:'keep' as const};e.duplicates.forEach(i=>next[i]='discard');return next;})}>Keep row {e.index+2}</button>
-                    <button type="button" className="secondary" disabled={busy} aria-pressed={rowChoices[e.index]==='discard'} onClick={()=>setRowChoices(old=>({...old,[e.index]:'discard'}))}>Discard row {e.index+2}</button>
-                    {e.existing.filter(l=>!l.deleted_at).map(l=><button type="button" className="text-button" key={l.id} onClick={()=>onViewLead?.(l)}>View existing lead</button>)}
-                    <strong>{rowChoices[e.index]==='discard'?'Discarded':rowChoices[e.index]==='keep'?'Keeping':'Choose an action'}</strong>
-                  </div>
-                </article>)}
-              </section>}
-              {duplicateReview.entries.filter(e=>e.related.length && rowChoices[e.index]!=='discard').map(e=><p key={e.index}>Row {e.index+2}: this number has {e.related.length} other accessible enquiry/enquiries in different clients or projects. This new enquiry is allowed.</p>)}
+              <label style={{display:'flex',alignItems:'center',gap:8,marginBottom:16}}><input type="checkbox" style={{width:18,height:18,minHeight:18,margin:0}} checked={duplicatesOnly} onChange={e=>setDuplicatesOnly(e.target.checked)}/>Review duplicates only</label>
+              <section aria-label="Review duplicates">
+                <h3>Duplicate entries</h3>
+                <p>Only repeated phone numbers are shown here. Choose Keep or Discard for each entry. Nothing is discarded automatically. Different projects can be kept; only one active enquiry per phone in the same client/project is allowed.</p>
+                {Array.from(new Set(duplicateReview.entries.filter(e=>e.duplicates.length || e.existing.length || e.related.length).map(e=>e.lead.phone))).map(phone=><section key={phone} style={{padding:12,marginBottom:16,border:'1px solid #d4d8de',borderRadius:12}}>
+                  <h4>Phone: {phone || 'Missing number'}</h4>
+                  {duplicateReview.entries.filter(e=>e.lead.phone===phone).map(e=><article key={e.index} style={{padding:12,marginBottom:8,background:'white',borderRadius:8}}>
+                    <strong>CSV row {e.index+2}: {e.lead.name || 'No name'}</strong>
+                    <p>{client?.name} · {e.lead.project || 'No project'}</p>
+                    <p>{e.existing.length ? 'An active enquiry already exists in this client/project. Discard this incoming row or update the existing lead.' : e.duplicates.length ? 'Same number also appears in CSV row(s) '+e.duplicates.map(i=>i+2).join(', ') : 'This number has an active enquiry in another client/project. You can keep this separate enquiry.'}</p>
+                    {[...e.existing,...e.related].map(l=><p key={l.id}>Existing: {l.name} · {clients.find(c=>c.id===l.client_id)?.name || 'Client'} · {l.project || 'No project'} {onViewLead && <button type="button" className="text-button" onClick={()=>onViewLead(l)}>View existing lead</button>}</p>)}
+                    <details><summary>Compare imported details</summary>{headers.map((h,i)=><p key={i} style={{overflowWrap:'anywhere'}}><strong>{h}:</strong> {rows[e.index][i] || '—'}</p>)}</details>
+                    <div className="inline" style={{flexWrap:'wrap',marginTop:12}}>
+                      <button type="button" className="secondary" disabled={busy || !!e.existing.length} aria-label={'Keep row '+(e.index+2)} aria-pressed={rowChoices[e.index]==='keep'} onClick={()=>setRowChoices(old=>({...old,[e.index]:'keep'}))}>Keep</button>
+                      <button type="button" className="secondary" disabled={busy} aria-label={'Discard row '+(e.index+2)} aria-pressed={rowChoices[e.index]==='discard'} onClick={()=>setRowChoices(old=>({...old,[e.index]:'discard'}))}>Discard</button>
+                      <strong>{rowChoices[e.index]==='discard'?'Discarded':rowChoices[e.index]==='keep'?'Keeping':'Choose an action'}</strong>
+                    </div>
+                  </article>)}
+                </section>)}
+                {!duplicateReview.entries.some(e=>e.duplicates.length || e.existing.length || e.related.length) && <p>No duplicate entries to review. Unique leads are included automatically.</p>}
+              </section>
               <p>{keptIndexes.length} leads selected for import · {Object.values(rowChoices).filter(x=>x==='discard').length} rows discarded</p>
               <p>
                 <strong>{client?.name}</strong> ·{" "}
@@ -596,7 +603,7 @@ export default function LeadImport({
                 </div>
               ) : (
                 <>
-                  <p>Preview of the first {Math.min(5, rows.length)} leads:</p>
+                  {!duplicatesOnly && <><p>Preview of the first {Math.min(5, keptIndexes.length)} selected leads:</p>
                   <div className="preview-scroll">
                     <table>
                       <thead>
@@ -623,6 +630,7 @@ export default function LeadImport({
                       </tbody>
                     </table>
                   </div>
+                  </>}
                   <p className="category-help">
                     The server also checks permissions and duplicates. A failed
                     import saves no leads.

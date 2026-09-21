@@ -1483,7 +1483,7 @@ export default function CRM() {
                 setConfirmation({bulkPurge:true,permanent:true,body:{action:"purgeLeads",ids:visibleTrash.map(l=>l.id)},title:"Permanently delete all "+visibleTrash.length+" matching leads?",message:"Client: "+(clientFilter==="all"?"All clients":categoryName(clients,clientFilter))+". "+(trashQuery?"Search: “"+trashQuery+"”. ":"")+"This permanently deletes the "+visibleTrash.length+" leads currently shown in Trash and all their notes and call history. Active leads are not affected. This cannot be undone. Keep this page open until deletion finishes."});
               }}>Delete all{clientFilter!=="all" || trashQuery ? " matching" : ""} ({visibleTrash.length})</button>
             </div>
-            <p>Restore deleted leads or permanently remove them and their notes and call history. Phone numbers remain reserved while leads are in Trash.</p>
+            <p>Restore deleted leads or permanently remove them and their notes and call history. Trashed leads do not block new imports. Restoring a lead may conflict with a new active enquiry.</p>
             <input aria-label="Search Trash by name or phone" placeholder="Search deleted leads by name or phone…" value={trashQuery} onChange={(e) => setTrashQuery(e.target.value)} style={{ width: "100%", margin: "16px 0" }} />
             {visibleTrash.map((l: any) => <article key={l.id} style={{ borderTop: "1px solid #e2e8f0", padding: "16px 0", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
               <div><strong>{l.name}</strong><p>{l.phone} · {categoryName(clients, l.client_id)}</p><small>Deleted {fmt(l.deleted_at)}</small></div>
@@ -1912,7 +1912,7 @@ export default function CRM() {
                       campaigns={campaigns}
                       projects={projects}
                       fields={fields}
-                      existing={[...allLeads,...(isAdmin ? data.trash || [] : [])]}
+                      existing={allLeads}
                       onViewLead={(l)=>setSelected(l)}
                       isAdmin={isAdmin}
                       onCreate={async (body) => {
