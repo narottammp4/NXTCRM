@@ -107,7 +107,7 @@ export async function POST(req: Request) {
     if (error) {
       if (error.code === "23505")
         throw new Error(
-          "409:An enquiry with this phone already exists in the same client/project (possibly in Trash), or a field/category name is already used. No changes were saved.",
+          b.action === "restoreLeads" ? "409:Cannot restore: an active enquiry already uses this phone in the same client/project. No leads were restored." : "409:An active enquiry with this phone already exists in the same client/project, or a field/category name is already used. No changes were saved.",
         );
       if (error.code === "23514")
         throw new Error("Select a valid status or field type");
