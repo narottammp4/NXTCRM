@@ -1,11 +1,11 @@
+import Image from "next/image";
 import Login from "./form";
 import { configured } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 export default function Page() {
   return (
     <main className="login">
-      <div className="brandmark">N</div>
-      <h1>NxtCall</h1>
+      <Image src="/nxtcall-logo.svg" alt="NxtCall" width={180} height={138} unoptimized priority style={{ objectFit: "contain", flexShrink: 0, borderRadius: 10 }} />
       <p>Your leads. Your next conversation.</p>
       {configured() ? (
         <Login />
