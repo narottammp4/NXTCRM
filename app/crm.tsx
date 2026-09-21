@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   LayoutDashboard,
@@ -438,8 +439,7 @@ export default function CRM() {
   if (!data)
     return (
       <main className="login">
-        <div className="brandmark">N</div>
-        <h1>NxtCall</h1>
+        <Image src="/nxtcall-logo.svg" alt="NxtCall" width={180} height={138} unoptimized priority style={{ objectFit: "contain", flexShrink: 0, borderRadius: 10 }} />
         <p>{error || "Opening your workspace…"}</p>
         {error && (
           <button
@@ -770,11 +770,7 @@ export default function CRM() {
       <Sidebar className="crm-sidebar">
         <SidebarHeader>
           <div className="brand">
-            <div className="brandmark">N</div>
-            <span>
-              Nxt<span className="brand-light">Call</span>
-              <small>SALES WORKSPACE</small>
-            </span>
+            <Image src="/nxtcall-logo.svg" alt="NxtCall" width={140} height={107} unoptimized priority style={{ objectFit: "contain", flexShrink: 0, borderRadius: 10 }} />
           </div>
           <div className="client-switcher">
             <label>
