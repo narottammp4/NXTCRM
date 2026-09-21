@@ -176,6 +176,8 @@ export default function CRM() {
   const [trashQuery, setTrashQuery] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
   const [confirmText, setConfirmText] = useState("");
+  const purgeInFlight = useRef(false);
+  const [purgeProgress, setPurgeProgress] = useState("");
   function requestDeletion(body: any, title: string, message: string, permanent = false) {
     setConfirmText("");
     setSelected(null);
@@ -345,6 +347,38 @@ export default function CRM() {
       setBusy(false);
     }
   }
+  async function confirmAction() {
+    if (!confirmation || busy || purgeInFlight.current) return;
+    if (!confirmation.bulkPurge) {
+      await save(confirmation.body, () => {
+        if (confirmation.body.action === "deleteCampaign") setCampaignFilter("all");
+        setConfirmation(null);
+        setCheckedLeads([]);
+      });
+      return;
+    }
+    if (confirmText !== "DELETE") return;
+    const ids: string[] = [...confirmation.body.ids];
+    purgeInFlight.current = true;
+    setBusy(true);
+    let completed = 0;
+    try {
+      for (let start = 0; start < ids.length; start += 500) {
+        setPurgeProgress("Deleting " + completed + " of " + ids.length + "…");
+        await post({ action: "purgeLeads", ids: ids.slice(start, start + 500) });
+        completed += Math.min(500, ids.length - start);
+      }
+      toast.success(completed + " leads permanently deleted");
+    } catch (e: any) {
+      toast.error("Deletion stopped. " + completed + " deletions confirmed. " + e.message + " Refresh Trash before trying again; the last request may have completed.", { duration: 12000 });
+    } finally {
+      setConfirmation(null);
+      try { await refresh(); } catch { toast.error("Could not refresh Trash. Refresh the page before continuing."); }
+      setPurgeProgress("");
+      setBusy(false);
+      purgeInFlight.current = false;
+    }
+  }
   async function call(l: any) {
     setBusy(true);
     try {
@@ -437,6 +471,9 @@ export default function CRM() {
   const clients = data.clients || [],
     projects = data.projects || [],
     campaigns = data.campaigns || [];
+  const visibleTrash: any[] = (data.trash || []).filter((l: any) =>
+    (clientFilter === "all" || l.client_id === clientFilter) &&
+    (l.name + " " + l.phone).toLowerCase().includes(trashQuery.toLowerCase()));
   const categoryName = (items: any[], id: string) =>
     items.find((x: any) => x.id === id)?.name || "";
   const resetFilters = () => {
@@ -1416,17 +1453,23 @@ export default function CRM() {
             </section>
           )}
           {view === "Trash" && isAdmin && <section className="panel" style={{ padding: 20 }}>
-            <h2>Trash</h2>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+              <h2>Trash</h2>
+              <button className="secondary" style={{color:"#b42318"}} disabled={busy || !visibleTrash.length} onClick={()=>{
+                setConfirmText("");
+                setConfirmation({bulkPurge:true,permanent:true,body:{action:"purgeLeads",ids:visibleTrash.map(l=>l.id)},title:"Permanently delete all "+visibleTrash.length+" matching leads?",message:"Client: "+(clientFilter==="all"?"All clients":categoryName(clients,clientFilter))+". "+(trashQuery?"Search: “"+trashQuery+"”. ":"")+"This permanently deletes the "+visibleTrash.length+" leads currently shown in Trash and all their notes and call history. Active leads are not affected. This cannot be undone. Keep this page open until deletion finishes."});
+              }}>Delete all{clientFilter!=="all" || trashQuery ? " matching" : ""} ({visibleTrash.length})</button>
+            </div>
             <p>Restore deleted leads or permanently remove them and their notes and call history. Phone numbers remain reserved while leads are in Trash.</p>
             <input aria-label="Search Trash by name or phone" placeholder="Search deleted leads by name or phone…" value={trashQuery} onChange={(e) => setTrashQuery(e.target.value)} style={{ width: "100%", margin: "16px 0" }} />
-            {(data.trash || []).filter((l: any) => (clientFilter === "all" || l.client_id === clientFilter) && (l.name + " " + l.phone).toLowerCase().includes(trashQuery.toLowerCase())).map((l: any) => <article key={l.id} style={{ borderTop: "1px solid #e2e8f0", padding: "16px 0", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
+            {visibleTrash.map((l: any) => <article key={l.id} style={{ borderTop: "1px solid #e2e8f0", padding: "16px 0", display: "flex", flexWrap: "wrap", gap: 16, justifyContent: "space-between", alignItems: "center" }}>
               <div><strong>{l.name}</strong><p>{l.phone} · {categoryName(clients, l.client_id)}</p><small>Deleted {fmt(l.deleted_at)}</small></div>
               <div className="inline" style={{ flexWrap: "wrap" }}>
                 <button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "restoreLeads", ids: [l.id] }, "Restore “" + l.name + "”?", "Restore this lead to its assigned caller with its notes, history and previous follow-up dates. Past follow-ups may appear overdue.")}>Restore</button>
                 <button className="secondary" disabled={busy} style={{ color: "#b42318" }} onClick={() => requestDeletion({ action: "purgeLeads", ids: [l.id] }, "Permanently delete “" + l.name + "”?", "This removes the lead and all its notes and call history. This cannot be undone.", true)}>Delete permanently</button>
               </div>
             </article>)}
-            {!(data.trash || []).some((l: any) => (clientFilter === "all" || l.client_id === clientFilter) && (l.name + " " + l.phone).toLowerCase().includes(trashQuery.toLowerCase())) && <p>No deleted leads found.</p>}
+            {!visibleTrash.length && <p>No deleted leads found.</p>}
           </section>}
           {view === "Reports & Stats" && (
             <>
@@ -1913,7 +1956,7 @@ export default function CRM() {
           {confirmation?.permanent && <label>Type DELETE to confirm<input aria-label="Type DELETE to confirm" autoComplete="off" value={confirmText} disabled={busy} onChange={(e) => setConfirmText(e.target.value)} style={{ display: "block", width: "100%", marginTop: 8 }} /></label>}
           <div className="inline" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
             <button className="secondary" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button>
-            <button className="primary" disabled={busy || (confirmation?.permanent && confirmText !== "DELETE")} onClick={() => save(confirmation.body, () => { if (confirmation.body.action === "deleteCampaign") setCampaignFilter("all"); setConfirmation(null); setCheckedLeads([]); })}>{busy ? "Saving…" : confirmation?.body.action === "restoreLeads" ? "Restore lead" : confirmation?.permanent ? "Delete permanently" : "Move to Trash"}</button>
+            <button className="primary" disabled={busy || (confirmation?.permanent && confirmText !== "DELETE")} onClick={confirmAction}>{busy ? purgeProgress || "Saving…" : confirmation?.body.action === "restoreLeads" ? "Restore lead" : confirmation?.permanent ? "Delete permanently" : "Move to Trash"}</button>
           </div>
         </DialogContent>
       </Dialog>
