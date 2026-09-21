@@ -68,7 +68,6 @@ import { toast } from "sonner";
 import CallerDashboard from "./caller-dashboard";
 import LeadImport from "./lead-import";
 import ImportSelect from "./import-select";
-import BulkAssignment from "./bulk-assignment";
 import { phoneKey } from "@/lib/enquiries";
 const statuses = [
   "New",
@@ -171,7 +170,10 @@ const badge = (s: string) =>
           ? "gray"
           : "blue";
 export default function CRM() {
-  const [assignmentCampaign,setAssignmentCampaign]=useState('');
+  const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
+  const [assignmentTarget, setAssignmentTarget] = useState("");
+  const [assignmentProgress, setAssignmentProgress] = useState("");
+  const assignmentInFlight = useRef(false);
   const [checkedLeads, setCheckedLeads] = useState<string[]>([]);
   const [trashQuery, setTrashQuery] = useState("");
   const [confirmation, setConfirmation] = useState<any>(null);
@@ -344,6 +346,31 @@ export default function CRM() {
     } catch (e: any) {
       toast.error(e.message);
     } finally {
+      setBusy(false);
+    }
+  }
+  async function assignSelected() {
+    if (busy || assignmentInFlight.current || !assignmentTarget || !assignmentIds.length) return;
+    assignmentInFlight.current = true;
+    setBusy(true);
+    const ids = [...assignmentIds];
+    const target = assignmentTarget;
+    let completed = 0;
+    try {
+      for (const id of ids) {
+        setAssignmentProgress("Assigning " + completed + " of " + ids.length + "…");
+        await post({ action: "assign", id, assignee: target });
+        completed++;
+      }
+      toast.success(completed + " leads assigned successfully");
+    } catch (e: any) {
+      toast.error("Assignment stopped. " + completed + " assignments confirmed. " + e.message + " Refresh and check the selected leads before trying again.", {duration: 12000});
+    } finally {
+      setAssignmentIds([]);
+      setCheckedLeads([]);
+      try { await refresh(); } catch { toast.error("Could not refresh leads. Refresh the page to see their latest assignments."); }
+      setAssignmentProgress("");
+      assignmentInFlight.current = false;
       setBusy(false);
     }
   }
@@ -811,7 +838,6 @@ export default function CRM() {
               </SidebarMenuItem>
             ))}
             {isAdmin && <SidebarMenuItem><SidebarMenuButton className="nav-item" isActive={view === "Trash"} onClick={() => setView("Trash")}><Trash2 /><span>Trash</span><span className="nav-count">{(data.trash || []).filter((l: any) => clientFilter === "all" || l.client_id === clientFilter).length}</span></SidebarMenuButton></SidebarMenuItem>}
-            {isAdmin && <SidebarMenuItem><SidebarMenuButton className="nav-item" isActive={view === "Assign leads"} onClick={()=>{setAssignmentCampaign('');setView('Assign leads');}}><Users/><span>Assign leads</span></SidebarMenuButton></SidebarMenuItem>}
           </SidebarMenu>
           <div className="sidebar-note">
             <div className="note-icon">
@@ -908,7 +934,6 @@ export default function CRM() {
                   ? isAdmin
                     ? `Your sales overview, ${data.user.name.split(" ")[0]}.`
                     : `Your day, ${data.user.name.split(" ")[0]}.`
-                  : view === "Assign leads" ? "Assign client and campaign leads"
                   : view === "Trash"
                     ? "Deleted leads"
                   : view === "Campaigns"
@@ -1226,7 +1251,6 @@ export default function CRM() {
                             "Client-wide"}
                         </small>
                         <h3>{ca.name}</h3>
-                        {isAdmin && <button className="secondary" onClick={()=>{setAssignmentCampaign(ca.id);setView('Assign leads');}}>Assign full campaign</button>}
                         <strong className="campaign-count">
                           {rows.length} leads
                         </strong>
@@ -1276,10 +1300,9 @@ export default function CRM() {
               </div>
             </section>
           )}
-          {view === "Assign leads" && isAdmin && <BulkAssignment key={assignmentCampaign} initialCampaign={assignmentCampaign} clients={clients} campaigns={campaigns} users={users} post={post} onSaved={refresh}/>}
           {view === "Search" && (
             <section className="panel">
-              {isAdmin && checkedLeads.length > 0 && <div className="list-meta" role="status"><span>{checkedLeads.length} leads selected on this page</span><button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "trashLeads", ids: checkedLeads }, "Delete " + checkedLeads.length + " leads?", "Move these selected leads to Trash? They will disappear from caller lists, dashboards and reports. An admin can restore them later.")}>Delete selected</button></div>}
+              {isAdmin && checkedLeads.length > 0 && <div className="list-meta" role="status"><span>{checkedLeads.length} leads selected on this page</span><div className="inline" style={{flexWrap:"wrap"}}><button className="primary" disabled={busy} onClick={()=>{setAssignmentTarget("");setAssignmentIds([...checkedLeads]);}}>Assign</button><button className="secondary" disabled={busy} onClick={() => requestDeletion({ action: "trashLeads", ids: checkedLeads }, "Delete " + checkedLeads.length + " leads?", "Move these selected leads to Trash? They will disappear from caller lists, dashboards and reports. An admin can restore them later.")}>Delete selected</button></div></div>}
               <div className="category-filters">
                 <Pick
                   label="Filter project"
@@ -1950,6 +1973,21 @@ export default function CRM() {
           ))}
         </nav>
       </SidebarInset>
+      <Dialog open={assignmentIds.length > 0 && isAdmin} onOpenChange={(open)=>{if(!open && !assignmentInFlight.current) setAssignmentIds([]);}}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Assign {assignmentIds.length} selected {assignmentIds.length===1?"lead":"leads"}</DialogTitle><DialogDescription>Choose a caller or admin. This replaces the current assignment and keeps all notes and history. Pending call prompts for these leads will be cleared.</DialogDescription></DialogHeader>
+          <label>Assign to
+            <ImportSelect aria-label="Assign selected leads to" disabled={busy} value={assignmentTarget} onChange={e=>setAssignmentTarget(e.target.value)}>
+              <option value="">Choose caller or admin</option>
+              {users.filter(u=>u.active && (u.role==="caller" || u.role==="admin")).map(u=><option key={u.id} value={u.id}>{u.name} · {u.role==="admin"?"Admin":"Caller"}</option>)}
+            </ImportSelect>
+          </label>
+          <div className="inline" style={{justifyContent:"flex-end",flexWrap:"wrap"}}>
+            <button className="secondary" disabled={busy} onClick={()=>setAssignmentIds([])}>Cancel</button>
+            <button className="primary" disabled={busy || !assignmentTarget || !users.some(u=>u.id===assignmentTarget && u.active)} onClick={assignSelected}>{busy?assignmentProgress || "Assigning…":"Confirm assignment"}</button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={!!confirmation && isAdmin} onOpenChange={(open) => { if (!open && !busy) setConfirmation(null); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{confirmation?.title}</DialogTitle><DialogDescription>{confirmation?.message}</DialogDescription></DialogHeader>
