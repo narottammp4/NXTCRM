@@ -108,6 +108,14 @@ const emptyLead = {
   assignee: "",
   custom: {},
 };
+// A call session belongs to the user who clicked Call. It is only ever offered
+// to that user, and only when the snapshot itself was produced for that user.
+function ownedCall(snapshot: any) {
+  const p = snapshot?.pending;
+  if (!p || !snapshot?.user || p.userId !== snapshot.user.id) return null;
+  const lead = (snapshot.leads || []).find((x: any) => x.id === p.leadId);
+  return lead ? { session: p, lead } : null;
+}
 function Pick({
   value,
   onChange,
@@ -187,6 +195,7 @@ export default function CRM() {
     setConfirmation({ body, title, message, permanent });
   }
   const modalRef = useRef("");
+  const userIdRef = useRef<string | null>(null);
   const [clientFilter, setClientFilter] = useState("all"),
     [projectFilter, setProjectFilter] = useState("all"),
     [campaignFilter, setCampaignFilter] = useState("all");
@@ -240,6 +249,13 @@ export default function CRM() {
       if (r.status === 403) setData(null);
       throw new Error(j.error);
     }
+    if (userIdRef.current && j.user?.id && j.user.id !== userIdRef.current) {
+      // The sign-in cookie now belongs to someone else (e.g. another login in
+      // the same browser). Never mix their data or call session into this tab.
+      window.location.reload();
+      throw new Error("Account changed. Reloading…");
+    }
+    userIdRef.current = j.user?.id ?? userIdRef.current;
     setData(j);
     setError("");
     return j;
@@ -283,10 +299,8 @@ export default function CRM() {
       if (document.visibilityState === "visible" && !modalRef.current)
         refresh()
           .then((j) => {
-            if (j.pending) {
-              const l = j.leads.find((x: any) => x.id === j.pending.leadId);
-              if (l) openUpdate(l, true);
-            }
+            const own = ownedCall(j);
+            if (own) openUpdate(own.lead, true);
           })
           .catch(() => {});
     };
@@ -410,16 +424,17 @@ export default function CRM() {
   async function call(l: any) {
     setBusy(true);
     try {
-      if (data.pending && data.pending.leadId !== l.id) {
-        const old = data.leads.find((x: any) => x.id === data.pending.leadId);
-        if (old) {
-          openUpdate(old, true);
-          toast.info("Finish the previous call update first");
-          return;
-        }
+      const own = ownedCall(data);
+      if (own && own.lead.id !== l.id) {
+        openUpdate(own.lead, true);
+        toast.info("Finish the previous call update first");
+        return;
       }
-      await post({ action: "startCall", id: l.id });
-      setData((d: any) => ({ ...d, pending: { leadId: l.id } }));
+      const started = await post({ action: "startCall", id: l.id });
+      setData((d: any) => ({
+        ...d,
+        pending: started.session || { leadId: l.id, userId: d.user.id },
+      }));
       window.location.href = "tel:" + l.phone;
       setSelected(l);
       setUpdate({
@@ -959,12 +974,12 @@ export default function CRM() {
               </button>
             )}
           </div>
-          {data.pending && (
+          {ownedCall(data) && (
             <button
               className="pending-banner"
               onClick={() => {
-                const l = allLeads.find((l) => l.id === data.pending.leadId);
-                if (l) openUpdate(l, true);
+                const own = ownedCall(data);
+                if (own) openUpdate(own.lead, true);
               }}
             >
               <Phone size={17} />
@@ -2171,6 +2186,11 @@ export default function CRM() {
                     ...update,
                     followup: stamp(update.followup),
                     visit: stamp(update.visit),
+                    ...(modal === "call" &&
+                    ownedCall(data)?.lead.id === current.id &&
+                    data.pending.call_session_id
+                      ? { callSessionId: data.pending.call_session_id }
+                      : {}),
                   },
                   () => {
                     setModal("");
