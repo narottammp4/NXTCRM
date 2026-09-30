@@ -67,6 +67,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import CallerDashboard from "./caller-dashboard";
+import Reporting, { MetricDetails } from "./reporting";
+import { CLOSED_STATUSES } from "@/lib/reporting";
 import LeadImport from "./lead-import";
 import ImportSelect from "./import-select";
 import { phoneKey } from "@/lib/enquiries";
@@ -79,7 +81,8 @@ const statuses = [
   "Site Visit Completed",
   "Negotiation",
   "Booked / Won",
-  "Not Interested / Lost",
+  "Not Interested",
+  "Lost",
 ];
 const outcomes = [
   "Answered",
@@ -169,7 +172,7 @@ const initials = (s: string) =>
     .join("")
     .toUpperCase();
 const badge = (s: string) =>
-  s.includes("Visit")
+  ["Not Interested", "Lost"].includes(s) ? "gray" : s.includes("Visit")
     ? "purple"
     : s.includes("Interested") || s.includes("Won")
       ? "green"
@@ -179,6 +182,8 @@ const badge = (s: string) =>
           ? "gray"
           : "blue";
 export default function CRM() {
+  const [importantOnly, setImportantOnly] = useState(false);
+  const [dashboardDetail, setDashboardDetail] = useState<any>(null);
   const [assignmentIds, setAssignmentIds] = useState<string[]>([]);
   const [assignmentTarget, setAssignmentTarget] = useState("");
   const [assignmentProgress, setAssignmentProgress] = useState("");
@@ -221,7 +226,6 @@ export default function CRM() {
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("All statuses"),
     [owner, setOwner] = useState("All callers"),
-    [period, setPeriod] = useState("7"),
     [selected, setSelected] = useState<any>(null),
     [modal, setModal] = useState(""),
     [busy, setBusy] = useState(false),
@@ -290,6 +294,7 @@ export default function CRM() {
       outcome: "",
       note: "",
       followup: local(l.followup),
+      followup_important: !!l.followup_important,
       visit: local(l.visit),
     });
     setModal(call ? "call" : "update");
@@ -442,6 +447,7 @@ export default function CRM() {
         outcome: "",
         note: "",
         followup: local(l.followup),
+      followup_important: !!l.followup_important,
         visit: local(l.visit),
       });
       setModal("call");
@@ -483,9 +489,9 @@ export default function CRM() {
     isToday = (v: string) =>
       v && new Date(v).toLocaleDateString("en-CA") === today;
   const overdue = leads.filter(
-      (l) => l.followup && new Date(l.followup) < new Date(),
+      (l) => !CLOSED_STATUSES.includes(l.status) && l.followup && new Date(l.followup) < new Date(),
     ),
-    due = leads.filter((l) => isToday(l.followup)),
+    due = leads.filter((l) => !CLOSED_STATUSES.includes(l.status) && isToday(l.followup)),
     visits = leads
       .filter(
         (l) =>
@@ -494,22 +500,6 @@ export default function CRM() {
           new Date(l.visit) >= new Date(),
       )
       .sort((a, b) => a.visit.localeCompare(b.visit));
-  const metricEvents: any[] = (data.events || acts).filter(
-    (a: any) =>
-      (clientFilter === "all" ||
-        a.client_id === clientFilter ||
-        allLeads.some(
-          (l) => l.id === a.leadId && l.client_id === clientFilter,
-        )) &&
-      new Date(a.created).getTime() >= Date.now() - Number(period) * 86400000,
-  );
-  const recent = acts.filter(
-      (a) =>
-        new Date(a.created).getTime() >= Date.now() - Number(period) * 86400000,
-    ),
-    calls = metricEvents.filter(
-      (a: any) => a.type === "call" && a.outcome !== "Cancelled / Not Dialled",
-    );
   const clients = data.clients || [],
     projects = data.projects || [],
     campaigns = data.campaigns || [];
@@ -691,6 +681,7 @@ export default function CRM() {
                   }
                 >
                   {fmt(l.followup)}
+                  {l.followup_important && l.followup && <span className="badge amber important-badge">Important</span>}
                 </span>
               </TableCell>
               {fields
@@ -730,55 +721,7 @@ export default function CRM() {
       </div>
     );
   }
-  function exportReport() {
-    const rows = [
-      [
-        "Caller",
-        "Logged calls",
-        "Answered",
-        "Unique leads contacted",
-        "Site visits booked",
-        "Won leads",
-      ],
-      ...users.map((u) => {
-        const c = calls.filter((a: any) => a.userId === u.id);
-        return [
-          u.name,
-          c.length,
-          c.filter((a) => a.outcome === "Answered").length,
-          new Set(
-            c.filter((a) => a.outcome === "Answered").map((a: any) => a.leadId),
-          ).size,
-          leads.filter(
-            (l) => l.assignee === u.id && l.status === "Site Visit Booked",
-          ).length,
-          leads.filter(
-            (l) => l.assignee === u.id && l.status === "Booked / Won",
-          ).length,
-        ];
-      }),
-    ];
-    const csv = rows
-      .map((r) =>
-        r
-          .map(
-            (v) =>
-              '"' +
-              String(v)
-                .replace(/^[=+@-]/, "'")
-                .replaceAll('"', '""') +
-              '"',
-          )
-          .join(","),
-      )
-      .join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "caller-performance.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+
   return (
     <SidebarProvider style={{ "--sidebar-width": "244px" } as any}>
       <Toaster position="top-right" />
@@ -1000,9 +943,10 @@ export default function CRM() {
                     leads.some((l) => l.id === a.leadId),
                 ),
               }}
+              clientFilter={clientFilter}
               busy={busy}
               onCall={call}
-              onOpen={setSelected}
+              onOpen={(l) => { const found = allLeads.find(x => x.id === l.id); if (found) setSelected(found); }}
               onUpdate={openUpdate}
             />
           )}
@@ -1016,7 +960,7 @@ export default function CRM() {
                     sub: "In your workspace",
                     icon: Users,
                     style: "blue",
-                    click: () => showLeads(),
+                    click: () => setDashboardDetail({title: "Total leads", leads}),
                   },
                   {
                     label: "Follow-ups today",
@@ -1025,7 +969,7 @@ export default function CRM() {
                     icon: Clock3,
                     style: "amber",
                     click: () => {
-                      setModal("followups");
+                      setDashboardDetail({title: "Follow-ups today", leads: due});
                     },
                   },
                   {
@@ -1034,7 +978,7 @@ export default function CRM() {
                     sub: "The next step towards a home",
                     icon: Building2,
                     style: "purple",
-                    click: () => showLeads("Site Visit Booked"),
+                    click: () => setDashboardDetail({title: "Upcoming site visits", leads: visits}),
                   },
                   {
                     label: "Booked / Won",
@@ -1043,7 +987,7 @@ export default function CRM() {
                     sub: "Conversations that converted",
                     icon: Check,
                     style: "green",
-                    click: () => showLeads("Booked / Won"),
+                    click: () => setDashboardDetail({title: "Booked / Won", leads: leads.filter(l => l.status === "Booked / Won")}),
                   },
                 ].map((c) => (
                   <button className="stat" key={c.label} onClick={c.click}>
@@ -1058,6 +1002,7 @@ export default function CRM() {
                   </button>
                 ))}
               </div>
+              <Reporting compact data={data} clientFilter={clientFilter} onOpen={(l) => { const found = allLeads.find(x => x.id === l.id); if (found) setSelected(found); }} />
               <div className="dashboard-grid">
                 <section className="panel">
                   <div className="panel-heading">
@@ -1133,7 +1078,8 @@ export default function CRM() {
                     </div>
                     <Clock3 size={20} />
                   </div>
-                  {[...leads.filter((l) => l.followup)]
+                  <div className="followup-filter"><button className={importantOnly ? "secondary active" : "secondary"} aria-pressed={importantOnly} onClick={() => setImportantOnly(!importantOnly)}>Important only</button></div>
+                  {[...leads.filter((l) => l.followup && !CLOSED_STATUSES.includes(l.status) && (!importantOnly || l.followup_important))]
                     .sort((a, b) => a.followup.localeCompare(b.followup))
                     .slice(0, 3)
                     .map((l) => (
@@ -1147,6 +1093,7 @@ export default function CRM() {
                             }
                           >
                             {fmt(l.followup)}
+                  {l.followup_important && l.followup && <span className="badge amber important-badge">Important</span>}
                           </small>
                         </button>
                         <button
@@ -1158,7 +1105,7 @@ export default function CRM() {
                         </button>
                       </div>
                     ))}
-                  {!leads.some((l) => l.followup) && (
+                  {!leads.some((l) => l.followup && !CLOSED_STATUSES.includes(l.status) && (!importantOnly || l.followup_important)) && (
                     <div className="focus-empty">
                       <CalendarDays size={30} />
                       <strong>A clear schedule.</strong>
@@ -1506,154 +1453,7 @@ export default function CRM() {
             {!visibleTrash.length && <p>No deleted leads found.</p>}
           </section>}
           {view === "Reports & Stats" && (
-            <>
-              <div className="report-toolbar">
-                <span>
-                  Call activity is filtered by period. Pipeline totals show
-                  current lead status.
-                </span>
-                <Pick
-                  label="Reporting period"
-                  value={period}
-                  onChange={setPeriod}
-                  options={[
-                    { value: "1", label: "Last 24 hours" },
-                    { value: "7", label: "Last 7 days" },
-                    { value: "30", label: "Last 30 days" },
-                  ]}
-                />
-                <button className="secondary" onClick={exportReport}>
-                  <ArrowDownToLine size={16} />
-                  Export CSV
-                </button>
-              </div>
-              <div className="stats-grid">
-                {[
-                  ["Logged calls", calls.length],
-                  [
-                    "Answered",
-                    calls.filter((a: any) => a.outcome === "Answered").length,
-                  ],
-                  [
-                    "Unique leads contacted",
-                    new Set(
-                      calls
-                        .filter((a: any) => a.outcome === "Answered")
-                        .map((a: any) => a.leadId),
-                    ).size,
-                  ],
-                  [
-                    "Updates & notes",
-                    metricEvents.filter((a: any) => a.type === "update").length,
-                  ],
-                ].map(([l, v]) => (
-                  <div className="stat" key={l}>
-                    <span>{l}</span>
-                    <strong>{v}</strong>
-                    <small>Selected reporting period</small>
-                  </div>
-                ))}
-              </div>
-              <section className="panel">
-                <div className="panel-heading">
-                  <div>
-                    <h2>
-                      {isAdmin ? "Caller performance" : "Your performance"}
-                    </h2>
-                    <p>Activity that moves your leads forward.</p>
-                  </div>
-                  <ChartNoAxesCombined size={22} />
-                </div>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {[
-                        "Caller",
-                        "Logged calls",
-                        "Answered",
-                        "Visits booked",
-                        "Won leads",
-                        "Overdue follow-ups",
-                      ].map((h) => (
-                        <TableHead key={h}>{h}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {users.map((u) => (
-                      <TableRow key={u.id}>
-                        <TableCell>
-                          <div className="inline">
-                            <span className="avatar">{initials(u.name)}</span>
-                            <strong>{u.name}</strong>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {calls.filter((a: any) => a.userId === u.id).length}
-                        </TableCell>
-                        <TableCell>
-                          {
-                            calls.filter(
-                              (a: any) =>
-                                a.userId === u.id && a.outcome === "Answered",
-                            ).length
-                          }
-                        </TableCell>
-                        <TableCell>
-                          {
-                            leads.filter(
-                              (l) =>
-                                l.assignee === u.id &&
-                                l.status === "Site Visit Booked",
-                            ).length
-                          }
-                        </TableCell>
-                        <TableCell>
-                          {
-                            leads.filter(
-                              (l) =>
-                                l.assignee === u.id &&
-                                l.status === "Booked / Won",
-                            ).length
-                          }
-                        </TableCell>
-                        <TableCell>
-                          <span className="overdue">
-                            {overdue.filter((l) => l.assignee === u.id).length}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </section>
-              <section className="panel activity-panel">
-                <div className="panel-heading">
-                  <h2>Recent activity</h2>
-                </div>
-                {recent.length ? (
-                  recent.slice(0, 20).map((a) => (
-                    <div className="activity" key={a.id}>
-                      <span className="activity-dot" />
-                      <div>
-                        <strong>
-                          {userName(a.userId)} · {a.outcome || a.type}
-                        </strong>
-                        <p>
-                          {leads.find((l) => l.id === a.leadId)?.name}{" "}
-                          {a.note && "— " + a.note}
-                        </p>
-                        <small>{fmt(a.created)}</small>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty">
-                    <p>Saved call updates and notes will appear here.</p>
-                  </div>
-                )}
-              </section>
-            </>
+            <Reporting data={data} clientFilter={clientFilter} onOpen={(l) => { const found = allLeads.find(x => x.id === l.id); if (found) setSelected(found); }} />
           )}
           {view === "Add Leads" && (
             <div className="add-layout">
@@ -2054,7 +1854,7 @@ export default function CRM() {
                   ["Configuration", current.bhk],
                   ["Location", current.location],
                   ["Source", current.source],
-                  ["Follow-up", fmt(current.followup)],
+                  ["Follow-up", fmt(current.followup) + (current.followup_important && current.followup ? " · Important" : "")],
                   ["Site visit", fmt(current.visit)],
                   ...fields.map((f) => [
                     f.name,
@@ -2226,7 +2026,7 @@ export default function CRM() {
                     type="datetime-local"
                     value={update.followup || ""}
                     onChange={(e) =>
-                      setUpdate({ ...update, followup: e.target.value })
+                      setUpdate({ ...update, followup: e.target.value, followup_important: e.target.value ? update.followup_important : false })
                     }
                   />
                 </label>
@@ -2241,6 +2041,7 @@ export default function CRM() {
                   />
                 </label>
               </div>
+              <label className="important-control"><input type="checkbox" checked={!!update.followup_important && !!update.followup} disabled={!update.followup || CLOSED_STATUSES.includes(update.status)} onChange={e => setUpdate({...update, followup_important: e.target.checked})} /> Mark follow-up as Important</label>
               <div className="quick-dates">
                 {["Later today", "Tomorrow", "In 3 days"].map((s, i) => (
                   <button
@@ -2262,7 +2063,7 @@ export default function CRM() {
                 ))}
                 <button
                   type="button"
-                  onClick={() => setUpdate({ ...update, followup: "" })}
+                  onClick={() => setUpdate({ ...update, followup: "", followup_important: false })}
                 >
                   Clear follow-up
                 </button>
@@ -2709,8 +2510,9 @@ export default function CRM() {
           )}
           {modal === "followups" && (
             <div>
+              <div className="followup-filter"><button className={importantOnly ? "secondary active" : "secondary"} aria-pressed={importantOnly} onClick={() => setImportantOnly(!importantOnly)}>Important only</button></div>
               {leads
-                .filter((l) => l.followup)
+                .filter((l) => l.followup && !CLOSED_STATUSES.includes(l.status) && (!importantOnly || l.followup_important))
                 .sort((a, b) => a.followup.localeCompare(b.followup))
                 .map((l) => (
                   <div className="focus-row" key={l.id}>
@@ -2727,6 +2529,7 @@ export default function CRM() {
                         }
                       >
                         {fmt(l.followup)}
+                  {l.followup_important && l.followup && <span className="badge amber important-badge">Important</span>}
                       </small>
                     </button>
                     <button className="secondary" onClick={() => openUpdate(l)}>
@@ -2737,13 +2540,14 @@ export default function CRM() {
                     </button>
                   </div>
                 ))}
-              {!leads.some((l) => l.followup) && (
+              {!leads.some((l) => l.followup && !CLOSED_STATUSES.includes(l.status) && (!importantOnly || l.followup_important)) && (
                 <p>No follow-ups scheduled yet.</p>
               )}
             </div>
           )}
         </DialogContent>
       </Dialog>
+      <MetricDetails detail={dashboardDetail} onClose={() => setDashboardDetail(null)} onOpen={(l) => { const found = allLeads.find(x => x.id === l.id); if (found) setSelected(found); }} />
     </SidebarProvider>
   );
 }

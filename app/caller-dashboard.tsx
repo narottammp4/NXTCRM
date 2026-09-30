@@ -1,8 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
+import Reporting, { MetricDetails } from "./reporting";
+import { CLOSED_STATUSES } from "@/lib/reporting";
 import { Phone, Clock3, CalendarDays, ArrowUpRight, Check } from "lucide-react";
 type Props = {
   data: any;
+  clientFilter: string;
   busy: boolean;
   onCall: (lead: any) => void;
   onOpen: (lead: any) => void;
@@ -10,11 +13,14 @@ type Props = {
 };
 export default function CallerDashboard({
   data,
+  clientFilter,
   busy,
   onCall,
   onOpen,
   onUpdate,
 }: Props) {
+  const [importantOnly, setImportantOnly] = useState(false);
+  const [detail, setDetail] = useState<any>(null);
   const [tab, setTab] = useState("Overdue"),
     [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -24,7 +30,7 @@ export default function CallerDashboard({
   const today = (v: string) =>
     v && new Date(v).toDateString() === new Date(now).toDateString();
   const active = data.leads.filter(
-    (l: any) => !["Booked / Won", "Not Interested / Lost"].includes(l.status),
+    (l: any) => !CLOSED_STATUSES.includes(l.status),
   );
   const overdue = active
     .filter((l: any) => l.followup && Date.parse(l.followup) < now)
@@ -44,15 +50,8 @@ export default function CallerDashboard({
     "New leads": fresh,
     Scheduled: scheduled,
   };
-  const items = queues[tab];
-  const calls = (data.events || []).filter(
-    (a: any) =>
-      a.userId === data.user.id &&
-      a.type === "call" &&
-      a.outcome !== "Cancelled / Not Dialled" &&
-      today(a.created),
-  );
-  const answered = calls.filter((a: any) => a.outcome === "Answered");
+  const filteredQueues = Object.fromEntries(Object.entries(queues).map(([name,rows]) => [name, rows.filter(l => !importantOnly || (l.followup && l.followup_important))]));
+  const items = filteredQueues[tab];
   const visits = active
     .filter(
       (l: any) =>
@@ -96,38 +95,12 @@ export default function CallerDashboard({
           Your daily workspace
         </span>
       </div>
-      <div className="stats-grid">
+      <Reporting data={data} clientFilter={clientFilter} onOpen={onOpen} defaultPeriod="1" compact />
+      <div className="stats-grid caller-queue-stats">
         {[
-          ["My calls today", calls.length, "Manually logged calls", Phone],
-          [
-            "Answered today",
-            answered.length,
-            new Set(answered.map((a: any) => a.leadId)).size +
-              " unique leads reached",
-            Check,
-          ],
-          [
-            "Follow-ups remaining",
-            overdue.length + due.length,
-            overdue.length + " overdue · " + due.length + " later today",
-            Clock3,
-          ],
-          [
-            "Site visits today",
-            visits.filter((l: any) => today(l.visit)).length,
-            "Check the schedule below",
-            CalendarDays,
-          ],
-        ].map(([label, value, sub, Icon]: any) => (
-          <div className="stat" key={label}>
-            <div className="stat-top">
-              <span>{label}</span>
-              <Icon size={19} />
-            </div>
-            <strong>{value}</strong>
-            <small>{sub}</small>
-          </div>
-        ))}
+          {label: "Follow-ups remaining", rows: [...overdue,...due], sub: overdue.length + " overdue · " + due.length + " later today", Icon: Clock3},
+          {label: "Site visits today", rows: visits.filter((l:any) => today(l.visit)), sub: "Current schedule for today", Icon: CalendarDays},
+        ].map(({label,rows,sub,Icon}) => <button className="stat" key={label} onClick={()=>setDetail({title:label,leads:rows})}><div className="stat-top"><span>{label}</span><Icon size={19}/></div><strong>{rows.length}</strong><small>{sub} · View details →</small></button>)}
       </div>
       <div className="caller-grid">
         <section className="panel">
@@ -137,8 +110,9 @@ export default function CallerDashboard({
               <p>Closed leads are excluded from this queue.</p>
             </div>
           </div>
+          <div className="followup-filter"><button className={importantOnly ? "secondary active" : "secondary"} aria-pressed={importantOnly} onClick={() => {setImportantOnly(!importantOnly);setLimit(10);}}>Important only</button></div>
           <div className="queue-tabs" role="group" aria-label="Calling queue">
-            {Object.entries(queues).map(([name, rows]) => (
+            {Object.entries(filteredQueues).map(([name, rows]) => (
               <button
                 key={name}
                 aria-pressed={tab === name}
@@ -171,6 +145,7 @@ export default function CallerDashboard({
                   </button>
                   <div className="queue-meta">
                     <span className="badge blue">{l.status}</span>
+                    {l.followup_important && l.followup && <span className="badge amber">Important</span>}
                     {l.followup && (
                       <span
                         className={
@@ -290,6 +265,7 @@ export default function CallerDashboard({
           </section>
         </div>
       </div>
+      <MetricDetails detail={detail} onClose={() => setDetail(null)} onOpen={onOpen} />
       <p className="bottom-note">
         Call figures reflect your saved outcomes. Follow-up times use this
         device’s timezone.
